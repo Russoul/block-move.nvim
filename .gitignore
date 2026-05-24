@@ -1,0 +1,8 @@
+# Editor
+.DS_Store
+*.swp
+*.swo
+
+# Luarocks / build artifacts
+*.rock
+luarocks.lock
