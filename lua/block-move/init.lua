@@ -9,6 +9,48 @@ local function composition(f, g)
   end
 end
 
+--- Returns the 1-indexed character column of {markname} in buffer {bufnr},
+--- including any virtual (past-end-of-line) offset introduced by 'virtualedit'.
+--- Plain vim.fn.charcol()/col()/virtcol() all silently clamp such a mark to
+--- the end of its line, which corrupts block-wise selections whose corner
+--- rests past the end of a shorter line in the block.
+--- @param bufnr number
+--- @param markname string
+--- @return number|nil  nil if the mark is not set
+local function markVirtualCharCol(bufnr, markname)
+  local pos = vim.fn.getpos(markname)
+  local lnum = pos[2]
+  if lnum == 0 then
+    return nil
+  end
+
+  local bytecol = pos[3] -- 1-indexed byte column, clamped to the line's actual content
+  local off = pos[4] -- extra virtual screen columns past the clamp, from 'virtualedit'
+
+  local line = unpack(vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, true))
+  local prefixbytes = math.min(bytecol - 1, #line)
+  local charcol = vim.fn.strchars(string.sub(line, 1, prefixbytes), true) + 1
+
+  return charcol + off
+end
+
+--- Inverse of markVirtualCharCol: sets {markname} in buffer {bufnr} to virtual
+--- character column {virtualcol} on 0-indexed line {linenum0}, splitting it
+--- back into the (col, off) pair 'virtualedit' expects for that line's actual length.
+--- @param bufnr number
+--- @param markname string
+--- @param linenum0 number
+--- @param virtualcol number
+local function setMarkVirtualCharCol(bufnr, markname, linenum0, virtualcol)
+  local line = unpack(vim.api.nvim_buf_get_lines(bufnr, linenum0, linenum0 + 1, true))
+  local numchars = vim.fn.strchars(line, true)
+
+  local charcol = math.min(virtualcol, numchars + 1)
+  local off = virtualcol - charcol
+
+  vim.fn.setcharpos(markname, { bufnr, linenum0 + 1, charcol, off })
+end
+
 --- Pad the 0-indexed line at {linenum} in buffer {bufnum} with spaces on the right
 --- until its character count is at least {atleastcol}.
 --- @param bufnum number
@@ -157,8 +199,8 @@ end
 function M.moveSelectionDown()
   local bufnr = vim.fn.getpos("'<")[1]
   local lineLeft1 = vim.fn.line("'<")
-  local colLeft1 = vim.fn.charcol("'<")
-  local colRight1 = vim.fn.charcol("'>")
+  local colLeft1 = markVirtualCharCol(bufnr, "'<")
+  local colRight1 = markVirtualCharCol(bufnr, "'>")
   local lineRight1 = vim.fn.line("'>")
 
   local lineStart1 = math.min(lineLeft1, lineRight1)
@@ -201,8 +243,8 @@ function M.moveSelectionDown()
 
   computation()
 
-  vim.fn.setcharpos("'<", { bufnr, lineStart1 + 1, colStart1, 0 })
-  vim.fn.setcharpos("'>", { bufnr, lineEnd1 + 1, colEnd1, 0 })
+  setMarkVirtualCharCol(bufnr, "'<", lineStart1, colStart1)
+  setMarkVirtualCharCol(bufnr, "'>", lineEnd1, colEnd1)
 
   vim.cmd("normal! gv")
 end
@@ -210,8 +252,8 @@ end
 function M.moveSelectionUp()
   local bufnr = vim.fn.getpos("'<")[1]
   local lineLeft1 = vim.fn.line("'<")
-  local colLeft1 = vim.fn.charcol("'<")
-  local colRight1 = vim.fn.charcol("'>")
+  local colLeft1 = markVirtualCharCol(bufnr, "'<")
+  local colRight1 = markVirtualCharCol(bufnr, "'>")
   local lineRight1 = vim.fn.line("'>")
 
   local lineStart1 = math.min(lineLeft1, lineRight1)
@@ -253,8 +295,8 @@ function M.moveSelectionUp()
 
   computation()
 
-  vim.fn.setcharpos("'<", { bufnr, lineStart1 - 1, colStart1, 0 })
-  vim.fn.setcharpos("'>", { bufnr, lineEnd1 - 1, colEnd1, 0 })
+  setMarkVirtualCharCol(bufnr, "'<", lineStart1 - 2, colStart1)
+  setMarkVirtualCharCol(bufnr, "'>", lineEnd1 - 2, colEnd1)
 
   vim.cmd("normal! gv")
 end
@@ -263,8 +305,8 @@ function M.moveSelectionRight()
   local bufnr = vim.fn.getpos("'<")[1]
 
   local lineLeft1 = vim.fn.line("'<")
-  local colLeft1 = vim.fn.charcol("'<")
-  local colRight1 = vim.fn.charcol("'>")
+  local colLeft1 = markVirtualCharCol(bufnr, "'<")
+  local colRight1 = markVirtualCharCol(bufnr, "'>")
   local lineRight1 = vim.fn.line("'>")
 
   local lineStart1 = math.min(lineLeft1, lineRight1)
@@ -288,8 +330,8 @@ function M.moveSelectionRight()
 
   if toMove then
     computation()
-    vim.fn.setcharpos("'<", { bufnr, lineStart1, colStart1 + 1, 0 })
-    vim.fn.setcharpos("'>", { bufnr, lineEnd1, colEnd1 + 1, 0 })
+    setMarkVirtualCharCol(bufnr, "'<", lineStart1 - 1, colStart1 + 1)
+    setMarkVirtualCharCol(bufnr, "'>", lineEnd1 - 1, colEnd1 + 1)
   end
 
   vim.cmd("normal! gv")
@@ -298,8 +340,8 @@ end
 function M.moveSelectionLeft()
   local bufnr = vim.fn.getpos("'<")[1]
   local lineLeft1 = vim.fn.line("'<")
-  local colLeft1 = vim.fn.charcol("'<")
-  local colRight1 = vim.fn.charcol("'>")
+  local colLeft1 = markVirtualCharCol(bufnr, "'<")
+  local colRight1 = markVirtualCharCol(bufnr, "'>")
   local lineRight1 = vim.fn.line("'>")
 
   local lineStart1 = math.min(lineLeft1, lineRight1)
@@ -323,8 +365,8 @@ function M.moveSelectionLeft()
 
   if toMove then
     computation()
-    vim.fn.setcharpos("'<", { bufnr, lineStart1, colStart1 - 1, 0 })
-    vim.fn.setcharpos("'>", { bufnr, lineEnd1, colEnd1 - 1, 0 })
+    setMarkVirtualCharCol(bufnr, "'<", lineStart1 - 1, colStart1 - 1)
+    setMarkVirtualCharCol(bufnr, "'>", lineEnd1 - 1, colEnd1 - 1)
   end
 
   vim.cmd("normal! gv")
